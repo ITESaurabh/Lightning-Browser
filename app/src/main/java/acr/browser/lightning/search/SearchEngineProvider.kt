@@ -1,15 +1,28 @@
 package acr.browser.lightning.search
 
-import acr.browser.lightning.di.SuggestionsClient
-import acr.browser.lightning.log.Logger
-import acr.browser.lightning.preference.UserPreferences
-import acr.browser.lightning.search.engine.*
-import acr.browser.lightning.search.suggestions.*
-import android.app.Application
+import acr.browser.lightning.preference.UserPreferencesDataStore
+import acr.browser.lightning.search.engine.BaiduSearch
+import acr.browser.lightning.search.engine.BaseSearchEngine
+import acr.browser.lightning.search.engine.BingSearch
+import acr.browser.lightning.search.engine.CustomSearch
+import acr.browser.lightning.search.engine.DuckLiteSearch
+import acr.browser.lightning.search.engine.DuckSearch
+import acr.browser.lightning.search.engine.GoogleSearch
+import acr.browser.lightning.search.engine.KagiSearch
+import acr.browser.lightning.search.engine.NaverSearch
+import acr.browser.lightning.search.engine.StartPageSearch
+import acr.browser.lightning.search.engine.YahooSearch
+import acr.browser.lightning.search.engine.YandexSearch
+import acr.browser.lightning.search.suggestions.BaiduSuggestionsModel
+import acr.browser.lightning.search.suggestions.DuckSuggestionsModel
+import acr.browser.lightning.search.suggestions.GoogleSuggestionsModel
+import acr.browser.lightning.search.suggestions.KagiSuggestionsModel
+import acr.browser.lightning.search.suggestions.NaverSuggestionsModel
+import acr.browser.lightning.search.suggestions.NoOpSuggestionsRepository
+import acr.browser.lightning.search.suggestions.SuggestionsRepository
 import dagger.Reusable
-import io.reactivex.Single
-import okhttp3.OkHttpClient
 import javax.inject.Inject
+import javax.inject.Provider
 
 /**
  * The model that provides the search engine based
@@ -17,82 +30,60 @@ import javax.inject.Inject
  */
 @Reusable
 class SearchEngineProvider @Inject constructor(
-    private val userPreferences: UserPreferences,
-    @SuggestionsClient private val okHttpClient: Single<OkHttpClient>,
-    private val requestFactory: RequestFactory,
-    private val application: Application,
-    private val logger: Logger
+    private val userPreferencesDataStore: UserPreferencesDataStore,
+    private val googleSuggestionsModel: Provider<GoogleSuggestionsModel>,
+    private val duckSuggestionsModel: Provider<DuckSuggestionsModel>,
+    private val baiduSuggestionsModel: Provider<BaiduSuggestionsModel>,
+    private val naverSuggestionsModel: Provider<NaverSuggestionsModel>,
+    private val kagiSuggestionsModel: Provider<KagiSuggestionsModel>,
 ) {
 
     /**
      * Provide the [SuggestionsRepository] that maps to the user's current preference.
      */
-    fun provideSearchSuggestions(): SuggestionsRepository =
-        when (userPreferences.searchSuggestionChoice) {
-            0 -> NoOpSuggestionsRepository()
-            1 -> GoogleSuggestionsModel(okHttpClient, requestFactory, application, logger)
-            2 -> DuckSuggestionsModel(okHttpClient, requestFactory, application, logger)
-            3 -> BaiduSuggestionsModel(okHttpClient, requestFactory, application, logger)
-            4 -> NaverSuggestionsModel(okHttpClient, requestFactory, application, logger)
-            else -> GoogleSuggestionsModel(okHttpClient, requestFactory, application, logger)
+    suspend fun provideSearchSuggestions(): SuggestionsRepository =
+        when (userPreferencesDataStore.searchSuggestionChoice.get()) {
+            Suggestions.NONE -> NoOpSuggestionsRepository()
+            Suggestions.GOOGLE -> googleSuggestionsModel.get()
+            Suggestions.DUCK -> duckSuggestionsModel.get()
+            Suggestions.BAIDU -> baiduSuggestionsModel.get()
+            Suggestions.NAVER -> naverSuggestionsModel.get()
+            Suggestions.KAGI -> kagiSuggestionsModel.get()
         }
 
     /**
      * Provide the [BaseSearchEngine] that maps to the user's current preference.
      */
-    fun provideSearchEngine(): BaseSearchEngine =
-        when (userPreferences.searchChoice) {
-            0 -> CustomSearch(userPreferences.searchUrl)
-            1 -> GoogleSearch()
-            2 -> AskSearch()
-            3 -> BingSearch()
-            4 -> YahooSearch()
-            5 -> StartPageSearch()
-            6 -> StartPageMobileSearch()
-            7 -> DuckSearch()
-            8 -> DuckLiteSearch()
-            9 -> BaiduSearch()
-            10 -> YandexSearch()
-            11 -> NaverSearch()
-            else -> GoogleSearch()
-        }
-
-    /**
-     * Return the serializable index of of the provided [BaseSearchEngine].
-     */
-    fun mapSearchEngineToPreferenceIndex(searchEngine: BaseSearchEngine): Int =
-        when (searchEngine) {
-            is CustomSearch -> 0
-            is GoogleSearch -> 1
-            is AskSearch -> 2
-            is BingSearch -> 3
-            is YahooSearch -> 4
-            is StartPageSearch -> 5
-            is StartPageMobileSearch -> 6
-            is DuckSearch -> 7
-            is DuckLiteSearch -> 8
-            is BaiduSearch -> 9
-            is YandexSearch -> 10
-            is NaverSearch -> 11
-            else -> throw UnsupportedOperationException("Unknown search engine provided: " + searchEngine.javaClass)
+    suspend fun provideSearchEngine(): BaseSearchEngine =
+        when (userPreferencesDataStore.searchChoice.get()) {
+            SearchEngineChoice.CUSTOM -> CustomSearch(userPreferencesDataStore.searchUrl.get())
+            SearchEngineChoice.GOOGLE -> GoogleSearch()
+            SearchEngineChoice.BING -> BingSearch()
+            SearchEngineChoice.YAHOO -> YahooSearch()
+            SearchEngineChoice.START_PAGE -> StartPageSearch()
+            SearchEngineChoice.DUCK -> DuckSearch()
+            SearchEngineChoice.DUCK_LITE -> DuckLiteSearch()
+            SearchEngineChoice.BAIDU -> BaiduSearch()
+            SearchEngineChoice.YANDEX -> YandexSearch()
+            SearchEngineChoice.NAVER -> NaverSearch()
+            SearchEngineChoice.KAGI -> KagiSearch()
         }
 
     /**
      * Provide a list of all supported search engines.
      */
-    fun provideAllSearchEngines(): List<BaseSearchEngine> = listOf(
-        CustomSearch(userPreferences.searchUrl),
+    suspend fun provideAllSearchEngines(): List<BaseSearchEngine> = listOf(
+        CustomSearch(userPreferencesDataStore.searchUrl.get()),
         GoogleSearch(),
-        AskSearch(),
         BingSearch(),
         YahooSearch(),
         StartPageSearch(),
-        StartPageMobileSearch(),
         DuckSearch(),
         DuckLiteSearch(),
         BaiduSearch(),
         YandexSearch(),
-        NaverSearch()
+        NaverSearch(),
+        KagiSearch()
     )
 
 }

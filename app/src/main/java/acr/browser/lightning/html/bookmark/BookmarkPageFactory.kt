@@ -1,23 +1,33 @@
 package acr.browser.lightning.html.bookmark
 
 import acr.browser.lightning.R
+import acr.browser.lightning.compose.toRgbHexString
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.constant.FILE
 import acr.browser.lightning.database.Bookmark
 import acr.browser.lightning.database.bookmark.BookmarkRepository
-import acr.browser.lightning.di.DatabaseScheduler
-import acr.browser.lightning.di.DiskScheduler
+import acr.browser.lightning.di.FaviconCacheDir
+import acr.browser.lightning.di.GeneratedHtmlDir
 import acr.browser.lightning.extensions.safeUse
 import acr.browser.lightning.favicon.FaviconModel
-import acr.browser.lightning.favicon.toValidUri
 import acr.browser.lightning.html.HtmlPageFactory
-import acr.browser.lightning.html.jsoup.*
+import acr.browser.lightning.html.jsoup.andBuild
+import acr.browser.lightning.html.jsoup.body
+import acr.browser.lightning.html.jsoup.clone
+import acr.browser.lightning.html.jsoup.findId
+import acr.browser.lightning.html.jsoup.id
+import acr.browser.lightning.html.jsoup.parse
+import acr.browser.lightning.html.jsoup.removeElement
+import acr.browser.lightning.html.jsoup.style
+import acr.browser.lightning.html.jsoup.tag
+import acr.browser.lightning.html.jsoup.title
+import acr.browser.lightning.theme.ThemeProvider
 import acr.browser.lightning.utils.ThemeUtils
+import acr.browser.lightning.utils.ThreadSafeFileProvider
 import android.app.Application
 import android.graphics.Bitmap
-import androidx.core.net.toUri
-import dagger.Reusable
-import io.reactivex.Scheduler
-import io.reactivex.Single
+import androidx.compose.ui.graphics.toArgb
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.FileWriter
@@ -26,72 +36,86 @@ import javax.inject.Inject
 /**
  * Created by anthonycr on 9/23/18.
  */
-@Reusable
 class BookmarkPageFactory @Inject constructor(
     private val application: Application,
     private val bookmarkModel: BookmarkRepository,
     private val faviconModel: FaviconModel,
-    @DatabaseScheduler private val databaseScheduler: Scheduler,
-    @DiskScheduler private val diskScheduler: Scheduler,
-    private val bookmarkPageReader: BookmarkPageReader
+    private val coroutineDispatchers: CoroutineDispatchers,
+    private val bookmarkPageReader: BookmarkPageReader,
+    private val themeProvider: ThemeProvider,
+    @GeneratedHtmlDir private val generatedHtmlDir: ThreadSafeFileProvider,
+    @FaviconCacheDir private val faviconCacheDir: ThreadSafeFileProvider,
 ) : HtmlPageFactory {
 
     private val title = application.getString(R.string.action_bookmarks)
-    private val folderIconFile by lazy { File(application.cacheDir, FOLDER_ICON) }
-    private val defaultIconFile by lazy { File(application.cacheDir, DEFAULT_ICON) }
 
-    override fun buildPage(): Single<String> = bookmarkModel
-        .getAllBookmarksSorted()
-        .flattenAsObservable { it }
-        .groupBy<Bookmark.Folder, Bookmark>(Bookmark.Entry::folder) { it }
-        .flatMapSingle { bookmarksInFolder ->
-            val folder = bookmarksInFolder.key
-            return@flatMapSingle bookmarksInFolder
-                .toList()
-                .concatWith(
-                    if (folder == Bookmark.Folder.Root) {
-                        bookmarkModel.getFoldersSorted().map { it.filterIsInstance<Bookmark.Folder.Entry>() }
-                    } else {
-                        Single.just(emptyList())
-                    }
-                )
-                .toList()
-                .map { bookmarksAndFolders ->
-                    Pair(folder, bookmarksAndFolders.flatten().map { it.asViewModel() })
+    override suspend fun buildPage(): String = withContext(coroutineDispatchers.io) {
+        val folderIcon = File(faviconCacheDir.file(), FOLDER_ICON)
+        val defaultIcon = File(faviconCacheDir.file(), DEFAULT_ICON)
+        val bookmarks = bookmarkModel.getAllBookmarksSorted()
+        bookmarks.groupBy { it.folder }
+            .mapValues { (folder, bookmarks) ->
+                if (folder == Bookmark.Folder.Root) {
+                    construct((bookmarks + bookmarkModel.getFoldersSorted()).map {
+                        it.asViewModel(folderIcon, defaultIcon)
+                    })
+                } else {
+                    construct(bookmarks.map {
+                        it.asViewModel(folderIcon, defaultIcon)
+                    })
                 }
-        }
-        .map { (folder, viewModels) -> Pair(folder, construct(viewModels)) }
-        .subscribeOn(databaseScheduler)
-        .observeOn(diskScheduler)
-        .doOnNext { (folder, content) ->
-            FileWriter(createBookmarkPage(folder), false).use {
-                it.write(content)
+            }.forEach { (folder, content) ->
+                FileWriter(createBookmarkPage(folder), false).use {
+                    it.write(content)
+                }
             }
-        }
-        .ignoreElements()
-        .toSingle {
-            cacheIcon(ThemeUtils.createThemedBitmap(application, R.drawable.ic_folder, false), folderIconFile)
-            cacheIcon(faviconModel.createDefaultBitmapForTitle(null), defaultIconFile)
 
-            "$FILE${createBookmarkPage(null)}"
-        }
+        val colorScheme = themeProvider.colorScheme()
+        cacheIcon(
+            ThemeUtils.createThemedBitmap(
+                application,
+                R.drawable.ic_folder,
+                colorScheme.onSurfaceVariant.toArgb()
+            ),
+            folderIcon
+        )
+        cacheIcon(
+            faviconModel.createDefaultBitmapForTitle(null),
+            defaultIcon
+        )
+
+        "$FILE${createBookmarkPage(null)}"
+    }
 
     private fun cacheIcon(icon: Bitmap, file: File) = FileOutputStream(file).safeUse {
         icon.compress(Bitmap.CompressFormat.PNG, 100, it)
         icon.recycle()
     }
 
-    private fun construct(list: List<BookmarkViewModel>): String {
+    private suspend fun construct(list: List<BookmarkViewModel>): String {
+        val colorScheme = themeProvider.colorScheme()
         return parse(bookmarkPageReader.provideHtml()) andBuild {
             title { title }
+            style { content ->
+                content.replace(
+                    "--body-bg: {COLOR}",
+                    "--body-bg: #${colorScheme.surface.toRgbHexString()};"
+                ).replace(
+                    "--box-bg: {COLOR}",
+                    "--box-bg: #${colorScheme.surfaceContainer.toRgbHexString()};"
+                ).replace(
+                    "--box-txt: {COLOR}",
+                    "--box-txt: #${colorScheme.onSurfaceVariant.toRgbHexString()};"
+                )
+            }
             body {
-                val repeatableElement = id("repeated").removeElement()
+                val repeatableElement = findId("repeated").removeElement()
                 id("content") {
-                    list.forEach {
+                    list.forEach { (title, url, iconUrl) ->
                         appendChild(repeatableElement.clone {
-                            tag("a") { attr("href", it.url) }
-                            tag("img") { attr("src", it.iconUrl) }
-                            id("title") { appendText(it.title) }
+                            tag("a") { attr("href", url) }
+                            tag("img") { attr("src", iconUrl) }
+                            id("title") { appendText(title) }
                         })
                     }
                 }
@@ -99,12 +123,18 @@ class BookmarkPageFactory @Inject constructor(
         }
     }
 
-    private fun Bookmark.asViewModel(): BookmarkViewModel = when (this) {
-        is Bookmark.Folder -> createViewModelForFolder(this)
-        is Bookmark.Entry -> createViewModelForBookmark(this)
+    private suspend fun Bookmark.asViewModel(
+        folderIconFile: File,
+        defaultIconFile: File,
+    ): BookmarkViewModel = when (this) {
+        is Bookmark.Folder -> createViewModelForFolder(this, folderIconFile)
+        is Bookmark.Entry -> createViewModelForBookmark(this, defaultIconFile)
     }
 
-    private fun createViewModelForFolder(folder: Bookmark.Folder): BookmarkViewModel {
+    private suspend fun createViewModelForFolder(
+        folder: Bookmark.Folder,
+        folderIconFile: File,
+    ): BookmarkViewModel {
         val folderPage = createBookmarkPage(folder)
         val url = "$FILE$folderPage"
 
@@ -115,16 +145,15 @@ class BookmarkPageFactory @Inject constructor(
         )
     }
 
-    private fun createViewModelForBookmark(entry: Bookmark.Entry): BookmarkViewModel {
-        val bookmarkUri = entry.url.toUri().toValidUri()
-
-        val iconUrl = if (bookmarkUri != null) {
-            val faviconFile = FaviconModel.getFaviconCacheFile(application, bookmarkUri)
-            if (!faviconFile.exists()) {
+    private suspend fun createViewModelForBookmark(
+        entry: Bookmark.Entry,
+        defaultIconFile: File,
+    ): BookmarkViewModel {
+        val faviconFile = faviconModel.getFaviconPathForUrl(entry.url)
+        val iconUrl = if (faviconFile != null) {
+            if (!File(faviconFile).exists()) {
                 val defaultFavicon = faviconModel.createDefaultBitmapForTitle(entry.title)
                 faviconModel.cacheFaviconForUrl(defaultFavicon, entry.url)
-                    .subscribeOn(diskScheduler)
-                    .subscribe()
             }
 
             faviconFile
@@ -142,13 +171,15 @@ class BookmarkPageFactory @Inject constructor(
     /**
      * Create the bookmark page file.
      */
-    fun createBookmarkPage(folder: Bookmark.Folder?): File {
+    private suspend fun createBookmarkPage(folder: Bookmark.Folder?): File {
         val prefix = if (folder?.title?.isNotBlank() == true) {
             "${folder.title}-"
         } else {
             ""
         }
-        return File(application.filesDir, prefix + FILENAME)
+        val generatedHtml = generatedHtmlDir.file()
+        generatedHtml.mkdirs()
+        return File(generatedHtml, prefix + FILENAME)
     }
 
     companion object {

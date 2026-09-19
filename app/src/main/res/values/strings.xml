@@ -18,11 +18,14 @@
     <string name="fullscreen">Full-screen mode</string>
     <string name="java">Enable JavaScript</string>
     <string name="download">Download location</string>
+    <string name="download_subfolder">Subfolder</string>
     <string name="settings_advanced">Advanced Settings</string>
     <string name="apache">Apache License 2.0</string>
     <string name="version">Application version</string>
     <string name="cache">Clear cache on exit</string>
     <string name="reflow">Enable text reflow</string>
+    <string name="algorithmic_darkening_title">Force websites to use dark theme</string>
+    <string name="algorithmic_darkening_summary">Darken website content if possible when using dark theme</string>
     <string name="block">Block images</string>
     <string name="window">Allow sites to open new windows</string>
     <string name="cookies">Enable cookies</string>
@@ -111,6 +114,10 @@
     <string name="message_blocked_local">Local file has been blocked from loading</string>
     <string name="licenses">Open Source Licenses</string>
     <string name="suggestion">Search for</string>
+    <string name="header_warning">Warning! This setting can cause the browser to misbehave</string>
+    <string name="open_available_apps">Open links in available default apps</string>
+    <string name="limit_active_tabs">Limit active tabs</string>
+    <string name="limit_active_tabs_summary">Limits the number of tabs active in the background, based on the device\'s memory.\nActive tab limit: %1$d</string>
 
     <!-- Ad block -->
     <string name="block_ads">Block ads</string>
@@ -173,22 +180,19 @@
     <string name="powered_by_duck">Powered by DuckDuckGo</string>
     <string name="powered_by_baidu">Powered by Baidu</string>
     <string name="powered_by_naver">Powered by Naver</string>
+    <string name="powered_by_kagi">Powered by Kagi</string>
     <string name="search_suggestions_off">No search suggestions</string>
     <string name="http_proxy">HTTP proxy</string>
     <string-array name="proxy_choices_array">
         <item>None</item>
         <item>Orbot</item>
-        <item>I2P</item>
         <item>Manual</item>
     </string-array>
     <string name="manual_proxy">Manual proxy</string>
     <string name="host">Host:</string>
     <string name="port">Port:</string>
     <string name="use_tor_prompt">It looks like you have Orbot installed. Do you want to use Tor?</string>
-    <string name="use_i2p_prompt">It looks like you have I2P installed. Do you want to use I2P?</string>
     <string name="install_orbot">Please install Orbot in order to proxy with Tor.</string>
-    <string name="i2p_not_running">I2P is not running.</string>
-    <string name="i2p_tunnels_not_ready">I2P tunnels are not ready yet.</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="clear_cookies_exit">Clear cookies on exit</string>
@@ -200,6 +204,8 @@
     <string name="freeware">Freeware</string>
     <string name="android_open_source_project">Android Open Source Project</string>
     <string name="hphosts_ad_server_list">hpHosts Ad Server List</string>
+    <string name="message_reopen">Browser tab closed</string>
+    <string name="action_reopen">Reopen</string>
     <string name="reopening_recent_tab">Reopened old tab</string>
     <string name="rendering_mode">Rendering mode</string>
     <string name="name_inverted">Inverted</string>
@@ -229,7 +235,6 @@
     <string name="close_other_tabs">Close other tabs</string>
     <string name="third_party">Block 3rd party cookies</string>
     <string name="color_mode">Enable color mode</string>
-    <string name="reading_mode">Reader mode</string>
     <string name="loading">Loading&#8230;</string>
     <string name="loading_failed">Couldn\'t load anything from the page.</string>
     <string name="snacktory">Snacktory</string>
@@ -249,6 +254,7 @@
     <string name="theme">App theme</string>
     <string name="light_theme">Light theme</string>
     <string name="black_theme">Black theme (AMOLED)</string>
+    <string name="system_theme">System default theme</string>
     <string name="folder">Folder name</string>
     <string name="action_folder">Folder</string>
     <string name="action_rename">Rename</string>
@@ -272,6 +278,11 @@
     <string name="upsell_plus_version">Upgrade to Lightning Plus to block ads</string>
     <string name="message_open_download_fail">This file doesn\'t exist anymore</string>
 
+    <string name="tab_style_title">Tab Style</string>
+    <string name="tab_style_desktop">Desktop</string>
+    <string name="tab_style_side_drawer">Side Drawer</string>
+    <string name="tab_style_bottom_drawer">Bottom Drawer</string>
+
     <string name="faq">FAQ</string>
     <string name="faq_description">Frequently asked questions</string>
 
@@ -283,6 +294,7 @@
     <!-- Dialogs -->
     <string name="dialog_open_new_tab">Open in new tab</string>
     <string name="dialog_open_background_tab">Open in background tab</string>
+    <string name="result_open_background_tab">Opened background tab</string>
     <string name="dialog_open_incognito_tab">Open in incognito tab</string>
     <string name="dialog_remove_bookmark">Remove bookmark</string>
     <string name="dialog_edit_bookmark">Edit bookmark</string>
@@ -314,6 +326,7 @@
     <string name="search_engine_baidu">Baidu</string>
     <string name="search_engine_yandex">Yandex</string>
     <string name="search_engine_naver">Naver</string>
+    <string name="search_engine_kagi">Kagi</string>
 
     <!-- Notifications -->
     <plurals name="notification_incognito_running_title">

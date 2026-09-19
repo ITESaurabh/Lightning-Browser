@@ -1,7 +1,8 @@
 package acr.browser.lightning.adblock.source
 
-import acr.browser.lightning.preference.UserPreferences
+import acr.browser.lightning.preference.UserPreferencesDataStore
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 
 
@@ -13,7 +14,7 @@ sealed class HostsSourceType {
     /**
      * The default source, included in the app assets.
      */
-    object Default : HostsSourceType()
+    data object Default : HostsSourceType()
 
     /**
      * A local source, loaded from a local file.
@@ -34,27 +35,26 @@ sealed class HostsSourceType {
  * Extract the user's chosen [HostsSourceType] from the preferences. If either the file chosen is
  * invalid or the remote URL chosen is invalid, we will fall back to the [HostsSourceType.Default].
  */
-fun UserPreferences.selectedHostsSource(): HostsSourceType {
-    val localFile: File? = hostsLocalFile?.let(::File)?.takeIf(File::exists)?.takeIf(File::canRead)
+suspend fun UserPreferencesDataStore.selectedHostsSource(): HostsSourceType {
+    val localFile: File? =
+        hostsLocalFile.get()?.let(::File)?.takeIf(File::exists)?.takeIf(File::canRead)
 
-    val remoteUrl: HttpUrl? = hostsRemoteFile?.let { HttpUrl.parse(it) }
+    val remoteUrl: HttpUrl? = hostsRemoteFile.get()?.toHttpUrlOrNull()
 
-    val source = hostsSource
+    val source = hostsSource.get()
 
-    return if (source == 1 && localFile != null) {
-        HostsSourceType.Local(localFile)
-    } else if (source == 2 && remoteUrl != null) {
-        HostsSourceType.Remote(remoteUrl)
-    } else {
-        HostsSourceType.Default
+    return when (source) {
+        HostsSourcePreference.LOCAL if localFile != null -> {
+            HostsSourceType.Local(localFile)
+        }
+
+        HostsSourcePreference.REMOTE if remoteUrl != null -> {
+            HostsSourceType.Remote(remoteUrl)
+        }
+
+        else -> {
+            HostsSourceType.Default
+        }
     }
 }
 
-/**
- * Convert the [HostsSourceType] to the index stored in preferences.
- */
-fun HostsSourceType.toPreferenceIndex(): Int = when (this) {
-    HostsSourceType.Default -> 0
-    is HostsSourceType.Local -> 1
-    is HostsSourceType.Remote -> 2
-}

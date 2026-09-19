@@ -1,11 +1,13 @@
 package acr.browser.lightning.database.bookmark
 
 import acr.browser.lightning.R
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.database.Bookmark
 import acr.browser.lightning.database.asFolder
 import acr.browser.lightning.database.databaseDelegate
 import acr.browser.lightning.extensions.firstOrNullMap
 import acr.browser.lightning.extensions.useMap
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentValues
 import android.database.Cursor
@@ -13,9 +15,8 @@ import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.getStringOrNull
-import io.reactivex.Completable
-import io.reactivex.Maybe
-import io.reactivex.Single
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,11 +25,14 @@ import javax.inject.Singleton
  *
  * Created by anthonycr on 5/6/17.
  */
+@SuppressLint("Range")
 @Singleton
 class BookmarkDatabase @Inject constructor(
-    application: Application
+    application: Application,
+    coroutineDispatchers: CoroutineDispatchers,
 ) : SQLiteOpenHelper(application, DATABASE_NAME, null, DATABASE_VERSION), BookmarkRepository {
 
+    private val databaseDispatcher = coroutineDispatchers.createDatabaseDispatcher()
     private val defaultBookmarkTitle: String = application.getString(R.string.untitled)
     private val database: SQLiteDatabase by databaseDelegate()
 
@@ -51,6 +55,9 @@ class BookmarkDatabase @Inject constructor(
         // Create tables again
         onCreate(db)
     }
+
+    private suspend fun <T> databaseContext(block: suspend CoroutineScope.() -> T) =
+        withContext(databaseDispatcher) { block() }
 
     /**
      * Queries the database for bookmarks with the provided URL. If it
@@ -120,20 +127,22 @@ class BookmarkDatabase @Inject constructor(
         return updatedRows
     }
 
-    override fun findBookmarkForUrl(url: String): Maybe<Bookmark.Entry> = Maybe.fromCallable {
-        return@fromCallable queryWithOptionalEndSlash(url).firstOrNullMap { it.bindToBookmarkEntry() }
+    override suspend fun findBookmarkForUrl(url: String): Bookmark.Entry? = databaseContext {
+        queryWithOptionalEndSlash(url).firstOrNullMap { it.bindToBookmarkEntry() }
     }
 
-    override fun isBookmark(url: String): Single<Boolean> = Single.fromCallable {
+    override suspend fun isBookmark(url: String): Boolean = withContext(databaseDispatcher) {
         queryWithOptionalEndSlash(url).use {
-            return@fromCallable it.moveToFirst()
+            it.moveToFirst()
         }
     }
 
-    override fun addBookmarkIfNotExists(entry: Bookmark.Entry): Single<Boolean> = Single.fromCallable {
+    override suspend fun addBookmarkIfNotExists(
+        entry: Bookmark.Entry
+    ): Boolean = withContext(databaseDispatcher) {
         queryWithOptionalEndSlash(entry.url).use {
             if (it.moveToFirst()) {
-                return@fromCallable false
+                return@withContext false
             }
         }
 
@@ -143,15 +152,17 @@ class BookmarkDatabase @Inject constructor(
             entry.bindBookmarkToContentValues()
         )
 
-        return@fromCallable id != -1L
+        return@withContext id != -1L
     }
 
-    override fun addBookmarkList(bookmarkItems: List<Bookmark.Entry>): Completable = Completable.fromAction {
+    override suspend fun addBookmarkList(
+        bookmarkItems: List<Bookmark.Entry>
+    ): Unit = withContext(databaseDispatcher) {
         database.apply {
             beginTransaction()
 
             for (item in bookmarkItems) {
-                addBookmarkIfNotExists(item).subscribe()
+                addBookmarkIfNotExists(item)
             }
 
             setTransactionSuccessful()
@@ -159,11 +170,16 @@ class BookmarkDatabase @Inject constructor(
         }
     }
 
-    override fun deleteBookmark(entry: Bookmark.Entry): Single<Boolean> = Single.fromCallable {
-        return@fromCallable deleteWithOptionalEndSlash(entry.url) > 0
+    override suspend fun deleteBookmark(
+        entry: Bookmark.Entry
+    ): Boolean = withContext(databaseDispatcher) {
+        deleteWithOptionalEndSlash(entry.url) > 0
     }
 
-    override fun renameFolder(oldName: String, newName: String): Completable = Completable.fromAction {
+    override suspend fun renameFolder(
+        oldName: String,
+        newName: String
+    ): Unit = withContext(databaseDispatcher) {
         val contentValues = ContentValues(1).apply {
             put(KEY_FOLDER, newName)
         }
@@ -171,37 +187,46 @@ class BookmarkDatabase @Inject constructor(
         database.update(TABLE_BOOKMARK, contentValues, "$KEY_FOLDER=?", arrayOf(oldName))
     }
 
-    override fun deleteFolder(folderToDelete: String): Completable =
-        Completable.fromAction(renameFolder(folderToDelete, "")::subscribe)
+    override suspend fun deleteFolder(
+        folderToDelete: String
+    ): Unit = withContext(databaseDispatcher) {
+        renameFolder(folderToDelete, "")
+    }
 
-    override fun deleteAllBookmarks(): Completable = Completable.fromAction {
+    override suspend fun deleteAllBookmarks(): Unit = withContext(databaseDispatcher) {
         database.run {
             delete(TABLE_BOOKMARK, null, null)
             close()
         }
     }
 
-    override fun editBookmark(oldBookmark: Bookmark.Entry, newBookmark: Bookmark.Entry): Completable = Completable.fromAction {
+    override suspend fun editBookmark(
+        oldBookmark: Bookmark.Entry,
+        newBookmark: Bookmark.Entry
+    ): Unit = withContext(databaseDispatcher) {
         val contentValues = newBookmark.bindBookmarkToContentValues()
 
         updateWithOptionalEndSlash(oldBookmark.url, contentValues)
     }
 
-    override fun getAllBookmarksSorted(): Single<List<Bookmark.Entry>> = Single.fromCallable {
-        return@fromCallable database.query(
-            TABLE_BOOKMARK,
-            null,
-            null,
-            null,
-            null,
-            null,
-            "$KEY_FOLDER, $KEY_POSITION ASC, $KEY_TITLE COLLATE NOCASE ASC, $KEY_URL ASC"
-        ).useMap { it.bindToBookmarkEntry() }
-    }
+    override suspend fun getAllBookmarksSorted(): List<Bookmark.Entry> =
+        withContext(databaseDispatcher) {
+            database.query(
+                TABLE_BOOKMARK,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "$KEY_FOLDER, $KEY_POSITION ASC, $KEY_TITLE COLLATE NOCASE ASC, $KEY_URL ASC"
+            ).useMap { it.bindToBookmarkEntry() }
+        }
 
-    override fun getBookmarksFromFolderSorted(folder: String?): Single<List<Bookmark>> = Single.fromCallable {
+    override suspend fun getBookmarksFromFolderSorted(
+        folder: String?
+    ): List<Bookmark> = withContext(databaseDispatcher) {
         val finalFolder = folder ?: ""
-        return@fromCallable database.query(
+        database.query(
             TABLE_BOOKMARK,
             null,
             "$KEY_FOLDER=?",
@@ -212,26 +237,27 @@ class BookmarkDatabase @Inject constructor(
         ).useMap { it.bindToBookmarkEntry() }
     }
 
-    override fun getFoldersSorted(): Single<List<Bookmark.Folder>> = Single.fromCallable {
-        return@fromCallable database
-            .query(
-                true,
-                TABLE_BOOKMARK,
-                arrayOf(KEY_FOLDER),
-                null,
-                null,
-                null,
-                null,
-                "$KEY_FOLDER ASC",
-                null
-            )
-            .useMap { it.getString(it.getColumnIndex(KEY_FOLDER)) }
-            .filter { !it.isNullOrEmpty() }
-            .map(String::asFolder)
-    }
+    override suspend fun getFoldersSorted(): List<Bookmark.Folder> =
+        withContext(databaseDispatcher) {
+            database
+                .query(
+                    true,
+                    TABLE_BOOKMARK,
+                    arrayOf(KEY_FOLDER),
+                    null,
+                    null,
+                    null,
+                    null,
+                    "$KEY_FOLDER ASC",
+                    null
+                )
+                .useMap { it.getString(it.getColumnIndex(KEY_FOLDER)) }
+                .filter { !it.isNullOrEmpty() }
+                .map(String::asFolder)
+        }
 
-    override fun getFolderNames(): Single<List<String>> = Single.fromCallable {
-        return@fromCallable database.query(
+    override suspend fun getFolderNames(): List<String> = withContext(databaseDispatcher) {
+        database.query(
             true,
             TABLE_BOOKMARK,
             arrayOf(KEY_FOLDER),
@@ -245,7 +271,9 @@ class BookmarkDatabase @Inject constructor(
             .filter { !it.isNullOrEmpty() }
     }
 
-    override fun count(): Long = DatabaseUtils.queryNumEntries(database, TABLE_BOOKMARK)
+    override suspend fun count(): Long = withContext(databaseDispatcher) {
+        DatabaseUtils.queryNumEntries(database, TABLE_BOOKMARK)
+    }
 
     /**
      * Binds a [Bookmark.Entry] to [ContentValues].

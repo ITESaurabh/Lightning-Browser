@@ -2,12 +2,8 @@ package acr.browser.lightning.di
 
 import acr.browser.lightning.adblock.allowlist.AllowListModel
 import acr.browser.lightning.adblock.allowlist.SessionAllowListModel
-import acr.browser.lightning.adblock.source.AssetsHostsDataSource
-import acr.browser.lightning.adblock.source.HostsDataSource
 import acr.browser.lightning.adblock.source.HostsDataSourceProvider
 import acr.browser.lightning.adblock.source.PreferencesHostsDataSourceProvider
-import acr.browser.lightning.browser.cleanup.DelegatingExitCleanup
-import acr.browser.lightning.browser.cleanup.ExitCleanup
 import acr.browser.lightning.database.adblock.HostsDatabase
 import acr.browser.lightning.database.adblock.HostsRepository
 import acr.browser.lightning.database.allowlist.AdBlockAllowListDatabase
@@ -18,8 +14,24 @@ import acr.browser.lightning.database.downloads.DownloadsDatabase
 import acr.browser.lightning.database.downloads.DownloadsRepository
 import acr.browser.lightning.database.history.HistoryDatabase
 import acr.browser.lightning.database.history.HistoryRepository
+import acr.browser.lightning.download.DelegatingFileDownloader
+import acr.browser.lightning.download.FileDownloader
+import acr.browser.lightning.resources.DefaultNumberFormatter
+import acr.browser.lightning.resources.DefaultResourceProvider
+import acr.browser.lightning.resources.NumberFormatter
+import acr.browser.lightning.resources.ResourceProvider
+import acr.browser.lightning.settings.adblock.DefaultHostsFileUpdater
+import acr.browser.lightning.settings.adblock.HostsFileUpdater
+import acr.browser.lightning.settings.licenses.DefaultDependenciesRepository
+import acr.browser.lightning.settings.licenses.DependenciesRepository
+import acr.browser.lightning.settings.navigation.DefaultSettingsNavigator
+import acr.browser.lightning.settings.navigation.SettingsNavigator
 import acr.browser.lightning.ssl.SessionSslWarningPreferences
 import acr.browser.lightning.ssl.SslWarningPreferences
+import acr.browser.lightning.theme.DefaultThemeProvider
+import acr.browser.lightning.theme.ThemeProvider
+import acr.browser.lightning.useragent.DefaultUserAgentProvider
+import acr.browser.lightning.useragent.UserAgentProvider
 import dagger.Binds
 import dagger.Module
 
@@ -28,9 +40,6 @@ import dagger.Module
  */
 @Module
 interface AppBindsModule {
-
-    @Binds
-    fun bindsExitCleanup(delegatingExitCleanup: DelegatingExitCleanup): ExitCleanup
 
     @Binds
     fun bindsBookmarkModel(bookmarkDatabase: BookmarkDatabase): BookmarkRepository
@@ -51,11 +60,32 @@ interface AppBindsModule {
     fun bindsSslWarningPreferences(sessionSslWarningPreferences: SessionSslWarningPreferences): SslWarningPreferences
 
     @Binds
-    fun bindsHostsDataSource(assetsHostsDataSource: AssetsHostsDataSource): HostsDataSource
-
-    @Binds
     fun bindsHostsRepository(hostsDatabase: HostsDatabase): HostsRepository
 
     @Binds
     fun bindsHostsDataSourceProvider(preferencesHostsDataSourceProvider: PreferencesHostsDataSourceProvider): HostsDataSourceProvider
+
+    @Binds
+    fun bindsResourceProvider(defaultResourceProvider: DefaultResourceProvider): ResourceProvider
+
+    @Binds
+    fun bindsHostsFileUpdater(hostsFileUpdater: DefaultHostsFileUpdater): HostsFileUpdater
+
+    @Binds
+    fun bindsNumberFormatter(defaultNumberFormatter: DefaultNumberFormatter): NumberFormatter
+
+    @Binds
+    fun bindsThemeProvider(themeProvider: DefaultThemeProvider): ThemeProvider
+
+    @Binds
+    fun bindsFileDownloader(delegatingFileDownloader: DelegatingFileDownloader): FileDownloader
+
+    @Binds
+    fun bindsUserAgentProvider(defaultUserAgentProvider: DefaultUserAgentProvider): UserAgentProvider
+
+    @Binds
+    fun bindsSettingsNavigator(defaultSettingsNavigator: DefaultSettingsNavigator): SettingsNavigator
+
+    @Binds
+    fun bindsDependenciesRepository(defaultDependenciesRepository: DefaultDependenciesRepository): DependenciesRepository
 }

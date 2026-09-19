@@ -1,5 +1,6 @@
 package acr.browser.lightning.database.allowlist
 
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.database.databaseDelegate
 import acr.browser.lightning.extensions.firstOrNullMap
 import acr.browser.lightning.extensions.useMap
@@ -9,9 +10,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.annotation.WorkerThread
-import io.reactivex.Completable
-import io.reactivex.Maybe
-import io.reactivex.Single
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,9 +21,12 @@ import javax.inject.Singleton
 @Singleton
 @WorkerThread
 class AdBlockAllowListDatabase @Inject constructor(
-    application: Application
-) : SQLiteOpenHelper(application, DATABASE_NAME, null, DATABASE_VERSION), AdBlockAllowListRepository {
+    application: Application,
+    coroutineDispatchers: CoroutineDispatchers,
+) : SQLiteOpenHelper(application, DATABASE_NAME, null, DATABASE_VERSION),
+    AdBlockAllowListRepository {
 
+    private val databaseDispatcher = coroutineDispatchers.createDatabaseDispatcher()
     private val database: SQLiteDatabase by databaseDelegate()
 
     // Creating Tables
@@ -50,31 +52,36 @@ class AdBlockAllowListDatabase @Inject constructor(
         timeCreated = getLong(2)
     )
 
-    override fun allAllowListItems(): Single<List<AllowListEntry>> = Single.fromCallable {
-        database.query(
-            TABLE_WHITELIST,
-            null,
-            null,
-            null,
-            null,
-            null,
-            "$KEY_CREATED DESC"
-        ).useMap { it.bindToAllowListItem() }
-    }
+    override suspend fun allAllowListItems(): List<AllowListEntry> =
+        withContext(databaseDispatcher) {
+            database.query(
+                TABLE_WHITELIST,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "$KEY_CREATED DESC"
+            ).useMap { it.bindToAllowListItem() }
+        }
 
-    override fun allowListItemForUrl(url: String): Maybe<AllowListEntry> = Maybe.fromCallable {
+    override suspend fun allowListItemForUrl(
+        domain: String
+    ): AllowListEntry? = withContext(databaseDispatcher) {
         database.query(
             TABLE_WHITELIST,
             null,
             "$KEY_URL=?",
-            arrayOf(url), null,
+            arrayOf(domain), null,
             null,
             "$KEY_CREATED DESC",
             "1"
         ).firstOrNullMap { it.bindToAllowListItem() }
     }
 
-    override fun addAllowListItem(whitelistItem: AllowListEntry): Completable = Completable.fromAction {
+    override suspend fun addAllowListItem(
+        whitelistItem: AllowListEntry
+    ): Unit = withContext(databaseDispatcher) {
         val values = ContentValues().apply {
             put(KEY_URL, whitelistItem.domain)
             put(KEY_CREATED, whitelistItem.timeCreated)
@@ -82,11 +89,13 @@ class AdBlockAllowListDatabase @Inject constructor(
         database.insert(TABLE_WHITELIST, null, values)
     }
 
-    override fun removeAllowListItem(whitelistItem: AllowListEntry): Completable = Completable.fromAction {
+    override suspend fun removeAllowListItem(
+        whitelistItem: AllowListEntry
+    ): Unit = withContext(databaseDispatcher) {
         database.delete(TABLE_WHITELIST, "$KEY_URL = ?", arrayOf(whitelistItem.domain))
     }
 
-    override fun clearAllowList(): Completable = Completable.fromAction {
+    override suspend fun clearAllowList(): Unit = withContext(databaseDispatcher) {
         database.run {
             delete(TABLE_WHITELIST, null, null)
             close()

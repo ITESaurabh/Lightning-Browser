@@ -1,27 +1,31 @@
 package acr.browser.lightning.database.adblock
 
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.database.databaseDelegate
 import acr.browser.lightning.extensions.safeUse
 import acr.browser.lightning.extensions.useMap
+import android.annotation.SuppressLint
 import android.app.Application
 import android.content.ContentValues
-import android.database.Cursor
 import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import io.reactivex.Completable
-import io.reactivex.Single
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * A database that holds hosts, backed by SQLite.
  */
+@SuppressLint("Range")
 @Singleton
 class HostsDatabase @Inject constructor(
-    application: Application
+    application: Application,
+    coroutineDispatchers: CoroutineDispatchers,
 ) : SQLiteOpenHelper(application, DATABASE_NAME, null, DATABASE_VERSION), HostsRepository {
 
+    private val databaseDispatcher = coroutineDispatchers.createDatabaseDispatcher()
     private val database: SQLiteDatabase by databaseDelegate()
 
     // Creating Tables
@@ -40,26 +44,26 @@ class HostsDatabase @Inject constructor(
         onCreate(db)
     }
 
-    override fun addHosts(hosts: List<Host>): Completable = Completable.create {
-        database.apply {
-            beginTransaction()
+    override suspend fun addHosts(hosts: List<Host>): Unit =
+        withContext(NonCancellable + databaseDispatcher) {
+            database.apply {
+                beginTransaction()
 
-            for (item in hosts) {
-                if (it.isDisposed) {
-                    endTransaction()
-                    it.onComplete()
-                    return@apply
+                for (item in hosts) {
+                    database.insertWithOnConflict(
+                        TABLE_HOSTS,
+                        null,
+                        item.toContentValues(),
+                        SQLiteDatabase.CONFLICT_IGNORE
+                    )
                 }
-                database.insert(TABLE_HOSTS, null, item.toContentValues())
+
+                setTransactionSuccessful()
+                endTransaction()
             }
-
-            setTransactionSuccessful()
-            endTransaction()
         }
-        it.onComplete()
-    }
 
-    override fun removeAllHosts(): Completable = Completable.fromCallable {
+    override suspend fun removeAllHosts(): Unit = withContext(NonCancellable + databaseDispatcher) {
         database.run {
             delete(TABLE_HOSTS, null, null)
             close()
@@ -83,10 +87,12 @@ class HostsDatabase @Inject constructor(
         return false
     }
 
-    override fun hasHosts(): Boolean = DatabaseUtils.queryNumEntries(database, TABLE_HOSTS) > 0
+    override suspend fun hasHosts(): Boolean = withContext(databaseDispatcher) {
+        DatabaseUtils.queryNumEntries(database, TABLE_HOSTS) > 0
+    }
 
-    override fun allHosts(): Single<List<Host>> = Single.fromCallable {
-        return@fromCallable database.query(
+    override suspend fun allHosts(): List<Host> = withContext(NonCancellable + databaseDispatcher) {
+        database.query(
             TABLE_HOSTS,
             null,
             null,
@@ -94,7 +100,9 @@ class HostsDatabase @Inject constructor(
             null,
             null,
             null
-        ).useMap { it.bindToHost() }
+        ).useMap {
+            Host(name = it.getString(it.getColumnIndex(KEY_NAME)))
+        }
     }
 
     /**
@@ -103,13 +111,6 @@ class HostsDatabase @Inject constructor(
     private fun Host.toContentValues() = ContentValues(3).apply {
         put(KEY_NAME, name)
     }
-
-    /**
-     * Binds a [Cursor] to a single [Host].
-     */
-    private fun Cursor.bindToHost() = Host(
-        name = getString(getColumnIndex(KEY_NAME))
-    )
 
     companion object {
 

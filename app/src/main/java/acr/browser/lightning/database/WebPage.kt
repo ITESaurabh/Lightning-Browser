@@ -1,6 +1,7 @@
 package acr.browser.lightning.database
 
 import acr.browser.lightning.constant.FOLDER
+import acr.browser.lightning.constant.HTTPS
 
 /**
  * A data type that represents a page that can be loaded.
@@ -11,7 +12,16 @@ import acr.browser.lightning.constant.FOLDER
 sealed class WebPage(
     open val url: String,
     open val title: String
-)
+) {
+    /**
+     * The display URL that drops `https://` from the start of the URL.
+     */
+    val displayUrl: String
+        get() = when {
+            url.startsWith(HTTPS) -> url.substringAfter(HTTPS)
+            else -> url
+        }
+}
 
 /**
  * A data type that represents a page that was visited by the user.
@@ -57,7 +67,7 @@ sealed class Bookmark(
         /**
          * The root folder that contains bookmarks and other folders.
          */
-        object Root : Folder("", "")
+        data object Root : Folder("", "")
 
         /**
          * A folder that contains bookmarks.

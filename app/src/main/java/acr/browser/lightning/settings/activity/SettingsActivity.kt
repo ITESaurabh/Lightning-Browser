@@ -3,69 +3,86 @@
  */
 package acr.browser.lightning.settings.activity
 
-import acr.browser.lightning.R
-import acr.browser.lightning.device.BuildInfo
-import acr.browser.lightning.device.BuildType
+import acr.browser.lightning.ThemableActivity
+import acr.browser.lightning.compose.BrowserTheme
+import acr.browser.lightning.compose.slideInFrom
 import acr.browser.lightning.di.injector
-import android.os.Build
+import acr.browser.lightning.settings.SettingsScreenStateProvider
+import acr.browser.lightning.settings.framework.SettingsFrameworkPresenter
+import acr.browser.lightning.settings.framework.SettingsFrameworkScreen
+import acr.browser.lightning.settings.licenses.LicensesScreen
+import acr.browser.lightning.settings.licenses.LicensesScreenPresenter
+import acr.browser.lightning.settings.navigation.SettingsNavigation
+import acr.browser.lightning.settings.navigation.SettingsNavigator
+import android.content.Intent
 import android.os.Bundle
-import android.view.MenuItem
-import android.view.View
-import android.view.ViewGroup
-import android.widget.LinearLayout
-import com.anthonycr.grant.PermissionsManager
+import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.core.net.toUri
+import androidx.lifecycle.viewmodel.compose.viewModel
 import javax.inject.Inject
 
-class SettingsActivity : ThemableSettingsActivity() {
+class SettingsActivity : ThemableActivity() {
 
-    @Inject lateinit var buildInfo: BuildInfo
+    @Inject internal lateinit var settingsScreenStateProvider: SettingsScreenStateProvider
+    @Inject internal lateinit var licensesScreenPresenterFactory: LicensesScreenPresenter.Factory
+    @Inject internal lateinit var settingsNavigator: SettingsNavigator
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        injector.inject(this)
+        injector.settingsComponentBuilder()
+            .activity(this)
+            .build()
+            .inject(this)
+
         super.onCreate(savedInstanceState)
-        // this is a workaround for the Toolbar in PreferenceActivity
-        val root = findViewById<ViewGroup>(android.R.id.content)
-        val content = root.getChildAt(0) as LinearLayout
-        val toolbarContainer = View.inflate(this, R.layout.toolbar_settings, null) as LinearLayout
 
-        root.removeAllViews()
-        toolbarContainer.addView(content)
-        root.addView(toolbarContainer)
+        setContent {
+            BrowserTheme(appThemeStateFlow) {
+                val navigationState by settingsNavigator.events.collectAsState(SettingsNavigation.ROOT)
+                AnimatedContent(navigationState, transitionSpec = {
+                    when {
+                        targetState == initialState.parent -> slideInFrom { -it / 2 }
+                        else -> slideInFrom { it / 2 }
+                    }
+                }) { state ->
+                    when (state) {
+                        SettingsNavigation.LICENSES -> LicensesScreen(
+                            useBlackStatusBarStateFlow,
+                            viewModel(
+                                key = "licenses",
+                                factory = licensesScreenPresenterFactory
+                            ),
+                            onClickUrl = {
+                                startActivity(Intent(Intent.ACTION_VIEW, it.toUri()))
+                            }
+                        ) {
+                            settingsNavigator.navigateTo(SettingsNavigation.ABOUT)
+                        }
 
-        // now we can set the Toolbar using AppCompatPreferenceActivity
-        setSupportActionbar(toolbarContainer.findViewById(R.id.toolbar))
-        getSupportActionBar()?.setDisplayHomeAsUpEnabled(true)
-    }
-
-    override fun onBuildHeaders(target: MutableList<Header>) {
-        loadHeadersFromResource(R.xml.preferences_headers, target)
-        fragments.clear()
-
-        if (buildInfo.buildType == BuildType.RELEASE) {
-            target.removeAll { it.titleRes == R.string.debug_title }
+                        else -> {
+                            val frameworkState = settingsScreenStateProvider.provideState(state)
+                            SettingsFrameworkScreen(
+                                useBlackStatusBarStateFlow,
+                                viewModel(
+                                    key = state.name,
+                                    factory = SettingsFrameworkPresenter.Factory(
+                                        settingsFrameworkState = { frameworkState },
+                                        settingsNavigator = settingsNavigator,
+                                    )
+                                )
+                            ) {
+                                if (state == SettingsNavigation.ROOT) {
+                                    finish()
+                                } else {
+                                    settingsNavigator.navigateTo(SettingsNavigation.ROOT)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            // Workaround for bug in the AppCompat support library
-            target.forEach { it.iconRes = R.drawable.empty }
-        }
-
-        fragments.addAll(target.map(Header::fragment))
-    }
-
-    override fun isValidFragment(fragmentName: String): Boolean = fragments.contains(fragmentName)
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        finish()
-        return true
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        PermissionsManager.getInstance().notifyPermissionsChange(permissions, grantResults)
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-    }
-
-    companion object {
-        private val fragments = mutableListOf<String>()
     }
 }

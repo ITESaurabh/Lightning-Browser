@@ -1,32 +1,24 @@
 package acr.browser.lightning.adblock.source
 
-import acr.browser.lightning.di.HostsClient
-import acr.browser.lightning.log.Logger
-import acr.browser.lightning.preference.UserPreferences
-import android.app.Application
-import android.content.res.AssetManager
+import acr.browser.lightning.preference.UserPreferencesDataStore
 import dagger.Reusable
-import io.reactivex.Single
-import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 /**
- * A [HostsDataSourceProvider] backed by [UserPreferences].
+ * A [HostsDataSourceProvider] backed by [UserPreferencesDataStore].
  */
 @Reusable
 class PreferencesHostsDataSourceProvider @Inject constructor(
-    private val userPreferences: UserPreferences,
-    private val assetManager: AssetManager,
-    private val logger: Logger,
-    @HostsClient private val okHttpClient: Single<OkHttpClient>,
-    private val application: Application
+    private val userPreferencesDataStore: UserPreferencesDataStore,
+    private val assetsHostsDataSource: AssetsHostsDataSource,
+    private val fileHostsDataSourceFactory: FileHostsDataSource.Factory,
+    private val urlHostsDataSourceFactory: UrlHostsDataSource.Factory
 ) : HostsDataSourceProvider {
 
-    override fun createHostsDataSource(): HostsDataSource =
-        when (val source = userPreferences.selectedHostsSource()) {
-            HostsSourceType.Default -> AssetsHostsDataSource(assetManager, logger)
-            is HostsSourceType.Local -> FileHostsDataSource(logger, source.file)
-            is HostsSourceType.Remote -> UrlHostsDataSource(source.httpUrl, okHttpClient, logger, userPreferences, application)
+    override suspend fun createHostsDataSource(): HostsDataSource =
+        when (val source = userPreferencesDataStore.selectedHostsSource()) {
+            HostsSourceType.Default -> assetsHostsDataSource
+            is HostsSourceType.Local -> fileHostsDataSourceFactory.create(source.file)
+            is HostsSourceType.Remote -> urlHostsDataSourceFactory.create(source.httpUrl)
         }
-
 }

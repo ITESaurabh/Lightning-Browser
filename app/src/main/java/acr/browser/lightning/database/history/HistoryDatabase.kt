@@ -3,6 +3,7 @@
  */
 package acr.browser.lightning.database.history
 
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.database.HistoryEntry
 import acr.browser.lightning.database.databaseDelegate
 import acr.browser.lightning.extensions.firstOrNullMap
@@ -14,8 +15,7 @@ import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.annotation.WorkerThread
-import io.reactivex.Completable
-import io.reactivex.Single
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,9 +26,11 @@ import javax.inject.Singleton
 @Singleton
 @WorkerThread
 class HistoryDatabase @Inject constructor(
-    application: Application
+    application: Application,
+    coroutineDispatchers: CoroutineDispatchers,
 ) : SQLiteOpenHelper(application, DATABASE_NAME, null, DATABASE_VERSION), HistoryRepository {
 
+    private val databaseDispatcher = coroutineDispatchers.createDatabaseDispatcher()
     private val database: SQLiteDatabase by databaseDelegate()
 
     // Creating Tables
@@ -50,20 +52,26 @@ class HistoryDatabase @Inject constructor(
         onCreate(db)
     }
 
-    override fun deleteHistory(): Completable = Completable.fromAction {
+    override suspend fun deleteHistory(): Unit = withContext(databaseDispatcher) {
         database.run {
             delete(TABLE_HISTORY, null, null)
             close()
         }
     }
 
-    override fun deleteHistoryEntry(url: String): Completable = Completable.fromAction {
+    override suspend fun deleteHistoryEntry(url: String): Unit = withContext(databaseDispatcher) {
         database.delete(TABLE_HISTORY, "$KEY_URL = ?", arrayOf(url))
     }
 
-    override fun visitHistoryEntry(url: String, title: String?): Completable = Completable.fromAction {
+    override suspend fun visitHistoryEntry(
+        url: String,
+        title: String
+    ): Unit = withContext(databaseDispatcher) {
+        if (title.isBlank()) {
+            return@withContext
+        }
         val values = ContentValues().apply {
-            put(KEY_TITLE, title ?: "")
+            put(KEY_TITLE, title)
             put(KEY_TIME_VISITED, System.currentTimeMillis())
         }
 
@@ -81,29 +89,30 @@ class HistoryDatabase @Inject constructor(
             if (it.count > 0) {
                 database.update(TABLE_HISTORY, values, "$KEY_URL = ?", arrayOf(url))
             } else {
-                addHistoryEntry(HistoryEntry(url, title ?: ""))
+                addHistoryEntry(HistoryEntry(url, title))
             }
         }
     }
 
-    override fun findHistoryEntriesContaining(query: String): Single<List<HistoryEntry>> =
-        Single.fromCallable {
-            val search = "%$query%"
+    override suspend fun findHistoryEntriesContaining(
+        query: String
+    ): List<HistoryEntry> = withContext(databaseDispatcher) {
+        val search = "%$query%"
 
-            return@fromCallable database.query(
-                TABLE_HISTORY,
-                null,
-                "$KEY_TITLE LIKE ? OR $KEY_URL LIKE ?",
-                arrayOf(search, search),
-                null,
-                null,
-                "$KEY_TIME_VISITED DESC",
-                "5"
-            ).useMap { it.bindToHistoryEntry() }
-        }
+        database.query(
+            TABLE_HISTORY,
+            null,
+            "$KEY_TITLE LIKE ? OR $KEY_URL LIKE ?",
+            arrayOf(search, search),
+            null,
+            null,
+            "$KEY_TIME_VISITED DESC",
+            "5"
+        ).useMap { it.bindToHistoryEntry() }
+    }
 
-    override fun lastHundredVisitedHistoryEntries(): Single<List<HistoryEntry>> =
-        Single.fromCallable {
+    override suspend fun lastHundredVisitedHistoryEntries(): List<HistoryEntry> =
+        withContext(databaseDispatcher) {
             database.query(
                 TABLE_HISTORY,
                 null,
@@ -122,7 +131,7 @@ class HistoryDatabase @Inject constructor(
     }
 
     @WorkerThread
-    fun getHistoryEntry(url: String): String? =
+    private fun getHistoryEntry(url: String): String? =
         database.query(
             TABLE_HISTORY,
             arrayOf(KEY_ID, KEY_URL, KEY_TITLE),
@@ -135,7 +144,7 @@ class HistoryDatabase @Inject constructor(
         ).firstOrNullMap { it.getString(0) }
 
 
-    fun getAllHistoryEntries(): List<HistoryEntry> {
+    private fun getAllHistoryEntries(): List<HistoryEntry> {
         return database.query(
             TABLE_HISTORY,
             null,
@@ -147,7 +156,8 @@ class HistoryDatabase @Inject constructor(
         ).useMap { it.bindToHistoryEntry() }
     }
 
-    fun getHistoryEntriesCount(): Long = DatabaseUtils.queryNumEntries(database, TABLE_HISTORY)
+    private fun getHistoryEntriesCount(): Long =
+        DatabaseUtils.queryNumEntries(database, TABLE_HISTORY)
 
     private fun HistoryEntry.toContentValues() = ContentValues().apply {
         put(KEY_URL, url)

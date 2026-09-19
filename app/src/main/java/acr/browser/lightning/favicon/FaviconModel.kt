@@ -1,107 +1,75 @@
 package acr.browser.lightning.favicon
 
 import acr.browser.lightning.R
-import acr.browser.lightning.extensions.pad
+import acr.browser.lightning.concurrency.CoroutineDispatchers
+import acr.browser.lightning.di.FaviconCacheDir
+import acr.browser.lightning.extensions.color
 import acr.browser.lightning.extensions.safeUse
+import acr.browser.lightning.graphics.LetterImagePainter
 import acr.browser.lightning.log.Logger
-import acr.browser.lightning.utils.DrawableUtils
-import acr.browser.lightning.utils.FileUtils
+import acr.browser.lightning.utils.ThreadSafeFileProvider
 import android.app.Application
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
-import androidx.annotation.ColorInt
-import androidx.annotation.WorkerThread
+import android.graphics.Canvas
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.core.graphics.createBitmap
 import androidx.core.net.toUri
-import io.reactivex.Completable
-import io.reactivex.Maybe
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Reactive model that can fetch favicons
- * from URLs and also cache them.
+ * Reactive model that can fetch favicons from URLs and also cache them to disk.
  */
 @Singleton
 class FaviconModel @Inject constructor(
     private val application: Application,
-    private val logger: Logger
+    private val logger: Logger,
+    private val coroutineDispatchers: CoroutineDispatchers,
+    @FaviconCacheDir private val faviconCacheDir: ThreadSafeFileProvider
 ) {
 
-    private val loaderOptions = BitmapFactory.Options()
-    private val bookmarkIconSize = application.resources.getDimensionPixelSize(R.dimen.material_grid_small_icon)
-    private val faviconCache = object : LruCache<String, Bitmap>(FileUtils.megabytesToBytes(1).toInt()) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
-    }
+    private val bookmarkIconSize =
+        application.resources.getDimensionPixelSize(R.dimen.material_grid_small_icon)
 
     /**
-     * Retrieves a favicon from the memory cache.Bitmap may not be present if no bitmap has been
-     * added for the URL or if it has been evicted from the memory cache.
-     *
-     * @param url the URL to retrieve the bitmap for.
-     * @return the bitmap associated with the URL, may be null.
+     * Create the default favicon for a bookmark with the provided [title].
      */
-    private fun getFaviconFromMemCache(url: String): Bitmap? {
-        synchronized(faviconCache) {
-            return faviconCache.get(url)
-        }
-    }
-
-    fun createDefaultBitmapForTitle(title: String?): Bitmap {
+    fun createDefaultBitmapForTitle(title: String?): Bitmap = with(Density(application)) {
         val firstTitleCharacter = title?.takeIf(String::isNotBlank)?.let { it[0] } ?: '?'
 
-        @ColorInt val defaultFaviconColor = DrawableUtils.characterToColorHash(firstTitleCharacter, application)
+        val image = createBitmap(bookmarkIconSize, bookmarkIconSize)
+        val canvas = Canvas(image)
 
-        return DrawableUtils.createRoundedLetterImage(
-            firstTitleCharacter,
-            bookmarkIconSize,
-            bookmarkIconSize,
-            defaultFaviconColor
+        val letterImagePainter = LetterImagePainter(
+            textSize = 14.dp.toPx(),
+            radius = 6.dp.toPx(),
+            character = firstTitleCharacter,
+            size = bookmarkIconSize,
+            color = application.color(LetterImagePainter.colorForCharacter(firstTitleCharacter).resource)
         )
+
+        letterImagePainter.drawOn(canvas)
+
+        return image
     }
 
     /**
-     * Adds a bitmap to the memory cache for the given URL.
+     * Creates the cache file path for the favicon image. Path will be in the form of
+     * `[hash of URI host].png`
      *
-     * @param url    the URL to map the bitmap to.
-     * @param bitmap the bitmap to store.
+     * @param url The URI to use as a unique identifier.
+     * @return The path to the cache file or null if the [url] was invalid.
      */
-    private fun addFaviconToMemCache(url: String, bitmap: Bitmap) {
-        synchronized(faviconCache) {
-            faviconCache.put(url, bitmap)
-        }
-    }
+    suspend fun getFaviconPathForUrl(url: String): String? = withContext(coroutineDispatchers.io) {
+        val validUri = url.toUri().toValidUri() ?: return@withContext null
 
-    /**
-     * Retrieves the favicon for a URL, may be from network or cache.
-     *
-     * @param url   The URL that we should retrieve the favicon for.
-     * @param title The title for the web page.
-     */
-    fun faviconForUrl(url: String, title: String): Maybe<Bitmap> = Maybe.create {
-        val uri = url.toUri().toValidUri()
-            ?: return@create it.onSuccess(createDefaultBitmapForTitle(title).pad())
+        val hash = validUri.host.hashCode().toString()
 
-        val cachedFavicon = getFaviconFromMemCache(url)
-
-        if (cachedFavicon != null) {
-            return@create it.onSuccess(cachedFavicon.pad())
-        }
-
-        val faviconCacheFile = getFaviconCacheFile(application, uri)
-
-        if (faviconCacheFile.exists()) {
-            val storedFavicon = BitmapFactory.decodeFile(faviconCacheFile.path, loaderOptions)
-
-            if (storedFavicon != null) {
-                addFaviconToMemCache(url, storedFavicon)
-                return@create it.onSuccess(storedFavicon.pad())
-            }
-        }
-
-        return@create it.onSuccess(createDefaultBitmapForTitle(title).pad())
+        "${faviconCacheDir.file().path}/$hash.png"
     }
 
     /**
@@ -111,34 +79,21 @@ class FaviconModel @Inject constructor(
      * @param url     the URL to cache the favicon for.
      * @return an observable that notifies the consumer when it is complete.
      */
-    fun cacheFaviconForUrl(favicon: Bitmap, url: String): Completable = Completable.create { emitter ->
-        val uri = url.toUri().toValidUri() ?: return@create emitter.onComplete()
+    suspend fun cacheFaviconForUrl(
+        favicon: Bitmap,
+        url: String
+    ): Unit = withContext(coroutineDispatchers.io) {
+        val faviconPath = getFaviconPathForUrl(url) ?: return@withContext
 
-        logger.log(TAG, "Caching icon for ${uri.host}")
-        FileOutputStream(getFaviconCacheFile(application, uri)).safeUse {
+        logger.log(TAG, "Caching icon: $faviconPath")
+        FileOutputStream(File(faviconPath)).safeUse {
             favicon.compress(Bitmap.CompressFormat.PNG, 100, it)
             it.flush()
-            emitter.onComplete()
         }
     }
 
     companion object {
-
         private const val TAG = "FaviconModel"
-
-        /**
-         * Creates the cache file for the favicon image. File name will be in the form of "hash of URI host".png
-         *
-         * @param app the context needed to retrieve the cache directory.
-         * @param validUri the URI to use as a unique identifier.
-         * @return a valid cache file.
-         */
-        @WorkerThread
-        fun getFaviconCacheFile(app: Application, validUri: ValidUri): File {
-            val hash = validUri.host.hashCode().toString()
-
-            return File(app.cacheDir, "$hash.png")
-        }
     }
 
 }

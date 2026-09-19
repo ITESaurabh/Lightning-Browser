@@ -1,20 +1,18 @@
 package acr.browser.lightning.adblock.source
 
-import io.reactivex.Single
-
 /**
  * A data source that contains hosts.
  */
 interface HostsDataSource {
 
     /**
-     * Load the hosts and emit them as a [Single] [HostsResult].
+     * Load the hosts and return them as a [HostsResult].
      */
-    fun loadHosts(): Single<HostsResult>
+    suspend fun loadHosts(): HostsResult
 
     /**
      * The unique [String] identifier for this source.
      */
-    fun identifier(): String
+    suspend fun identifier(): String
 
 }

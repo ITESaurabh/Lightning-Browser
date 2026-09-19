@@ -1,9 +1,7 @@
 package acr.browser.lightning.browser.cleanup
 
-import acr.browser.lightning.browser.activity.BrowserActivity
 import acr.browser.lightning.log.Logger
 import acr.browser.lightning.utils.WebUtils
-import android.webkit.WebView
 import javax.inject.Inject
 
 /**
@@ -11,14 +9,15 @@ import javax.inject.Inject
  * clears cookies and all web data, which can be done without affecting
  */
 class EnhancedIncognitoExitCleanup @Inject constructor(
-    private val logger: Logger
+    private val logger: Logger,
+    private val webUtils: WebUtils,
 ) : ExitCleanup {
-    override fun cleanUp(webView: WebView?, context: BrowserActivity) {
-        WebUtils.clearCache(webView)
+    override suspend fun cleanUp() {
+        webUtils.clearCache()
         logger.log(TAG, "Cache Cleared")
-        WebUtils.clearCookies(context)
+        webUtils.clearCookies()
         logger.log(TAG, "Cookies Cleared")
-        WebUtils.clearWebStorage()
+        webUtils.clearWebStorage()
         logger.log(TAG, "WebStorage Cleared")
     }
 

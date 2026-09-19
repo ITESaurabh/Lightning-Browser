@@ -1,9 +1,11 @@
 package acr.browser.lightning.search.suggestions
 
+import acr.browser.lightning.concurrency.CoroutineDispatchers
 import acr.browser.lightning.database.SearchSuggestion
 import acr.browser.lightning.extensions.safeUse
 import acr.browser.lightning.log.Logger
-import io.reactivex.Single
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -11,18 +13,19 @@ import okhttp3.ResponseBody
 import java.io.IOException
 import java.io.UnsupportedEncodingException
 import java.net.URLEncoder
-import java.util.*
+import java.util.Locale
 
 /**
  * The base search suggestions API. Provides common fetching and caching functionality for each
  * potential suggestions provider.
  */
 abstract class BaseSuggestionsModel internal constructor(
-    private val okHttpClient: Single<OkHttpClient>,
+    private val okHttpClientDeferred: Deferred<OkHttpClient>,
     private val requestFactory: RequestFactory,
     private val encoding: String,
     locale: Locale,
-    private val logger: Logger
+    private val logger: Logger,
+    private val coroutineDispatchers: CoroutineDispatchers,
 ) : SuggestionsRepository {
 
     private val language = locale.language.takeIf(String::isNotEmpty) ?: DEFAULT_LANGUAGE
@@ -44,23 +47,24 @@ abstract class BaseSuggestionsModel internal constructor(
     @Throws(Exception::class)
     protected abstract fun parseResults(responseBody: ResponseBody): List<SearchSuggestion>
 
-    override fun resultsForSearch(rawQuery: String): Single<List<SearchSuggestion>> =
-        okHttpClient.flatMap { client ->
-            Single.fromCallable {
-                val query = try {
-                    URLEncoder.encode(rawQuery, encoding)
-                } catch (throwable: UnsupportedEncodingException) {
-                    logger.log(TAG, "Unable to encode the URL", throwable)
+    final override suspend fun resultsForSearch(
+        rawQuery: String
+    ): List<SearchSuggestion> = withContext(coroutineDispatchers.network) {
+        val okHttpClient = okHttpClientDeferred.await()
 
-                    return@fromCallable emptyList<SearchSuggestion>()
-                }
+        val query = try {
+            URLEncoder.encode(rawQuery, encoding)
+        } catch (throwable: UnsupportedEncodingException) {
+            logger.log(TAG, "Unable to encode the URL", throwable)
 
-                return@fromCallable client.downloadSuggestionsForQuery(query, language)
-                    ?.body()
-                    ?.safeUse(::parseResults)
-                    ?.take(MAX_RESULTS) ?: emptyList()
-            }
+            return@withContext emptyList<SearchSuggestion>()
         }
+
+        okHttpClient.downloadSuggestionsForQuery(query, language)
+            ?.body
+            ?.safeUse(::parseResults)
+            ?.take(MAX_RESULTS) ?: emptyList()
+    }
 
     /**
      * This method downloads the search suggestions for the specific query.
@@ -70,7 +74,10 @@ abstract class BaseSuggestionsModel internal constructor(
      *
      * @return the cache file containing the suggestions
      */
-    private fun OkHttpClient.downloadSuggestionsForQuery(query: String, language: String): Response? {
+    private fun OkHttpClient.downloadSuggestionsForQuery(
+        query: String,
+        language: String
+    ): Response? {
         val queryUrl = createQueryUrl(query, language)
         val request = requestFactory.createSuggestionsRequest(queryUrl, encoding)
         return try {
